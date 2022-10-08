@@ -2,13 +2,13 @@
 from setuptools import find_packages, setup
 
 setup(
-    name="redis",
+    name="redis:popper",
     description="Python client for Redis database and key-value store",
     long_description=open("README.md").read().strip(),
     long_description_content_type="text/markdown",
     keywords=["Redis", "key-value store", "database"],
     license="MIT",
-    version="4.4.0rc2",
+    version="4.4.0",
     packages=find_packages(
         include=[
             "redis",

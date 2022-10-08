@@ -925,7 +925,7 @@ class Redis(AbstractRedis, RedisModuleCommands, CoreCommands, SentinelCommands):
             retry=None,
             redis_connect_func=None,
             cache_write_once=True,
-            key_types : dict[str : KeyCacheProp] = {}
+            key_types = {}
     ):
         """
         Caching layer in redis client

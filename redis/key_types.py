@@ -17,6 +17,6 @@ Currently supported commands with WRITE_ONCE:
 
 # For now we only support single level key prefixes
 # dict [key_prefix (str) -> KeyCacheProp]
-def get_key_type(key: str, key_types: dict[str: KeyCacheProp]):
+def get_key_type(key: str, key_types):
     prefix = key.split(":")[0]
     return key_types.get(prefix, KeyCacheProp.DEFAULT)
