@@ -2,7 +2,6 @@
 
 import datetime
 import hashlib
-import time
 import warnings
 from typing import (
     TYPE_CHECKING,
