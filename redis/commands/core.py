@@ -16,11 +16,11 @@ from typing import (
     Mapping,
     Optional,
     Sequence,
-    Set,
     Tuple,
     Union,
+    Set,
 )
-
+from redis.key_types import KeyCacheProp, get_key_type
 from redis.compat import Literal
 from redis.exceptions import ConnectionError, DataError, NoScriptError, RedisError
 from redis.typing import (
@@ -50,6 +50,45 @@ if TYPE_CHECKING:
     from redis.client import Redis
 
 ResponseT = Union[Awaitable, Any]
+
+
+def to_str(val: Union[str, bytes, memoryview]):
+    typ = type(val)
+    if typ == str:
+        return val
+    elif typ == bytes:
+        return val.decode('utf-8')
+    else:
+        return str(val)
+
+
+def to_bytes(val: Union[str, bytes, memoryview]):
+    typ = type(val)
+    if typ == bytes:
+        return val
+    elif typ == str:
+        return val.encode()
+    else:
+        return bytes(val)
+
+
+def get_from_cache(rds, key: str, get_cmd: str = 'GET') -> Tuple[Any, bool]:
+    """
+    Gets key from cache if exists,
+    Otherwise gets key from redis, saves in the cache and returns
+    """
+    if not rds._is_pipeline and rds._cache_write_once:
+        key = to_str(key)
+        key_type = get_key_type(key, rds._key_types)
+        if key_type == KeyCacheProp.WRITE_ONCE:
+            val = rds._key_cache.get(key, None)
+            if val is None:
+                val = rds.execute_command(get_cmd, key)
+                rds._key_cache[key] = val
+
+            return val, True
+
+    return None, False
 
 
 class ACLCommands(CommandsProtocol):
@@ -1725,7 +1764,11 @@ class BasicKeyCommands(CommandsProtocol):
 
         For more information see https://redis.io/commands/get
         """
-        return self.execute_command("GET", name)
+        val, used_cache = get_from_cache(self, name)
+        if used_cache:
+            return val
+        else:
+            return self.execute_command("GET", name)
 
     def getdel(self, name: KeyT) -> ResponseT:
         """
@@ -4783,7 +4826,12 @@ class HashCommands(CommandsProtocol):
 
         For more information see https://redis.io/commands/hget
         """
-        return self.execute_command("HGET", name, key)
+        # val : Dict[bytes : bytes]
+        val, used_cache = get_from_cache(self, name, "HGETALL")
+        if not used_cache:
+            return self.execute_command("HGET", name, key)
+        else:
+            return val.get(to_bytes(key), None)
 
     def hgetall(self, name: str) -> Union[Awaitable[dict], dict]:
         """
@@ -4791,7 +4839,11 @@ class HashCommands(CommandsProtocol):
 
         For more information see https://redis.io/commands/hgetall
         """
-        return self.execute_command("HGETALL", name)
+        val, used_cache = get_from_cache(self, name, "HGETALL")
+        if used_cache:
+            return val
+        else:
+            return self.execute_command("HGETALL", name)
 
     def hincrby(
         self, name: str, key: str, amount: int = 1
@@ -4894,7 +4946,14 @@ class HashCommands(CommandsProtocol):
         For more information see https://redis.io/commands/hmget
         """
         args = list_or_args(keys, args)
-        return self.execute_command("HMGET", name, *args)
+
+        val, used_cache = get_from_cache(self, name, "HGETALL")
+
+        if not used_cache:
+            return self.execute_command("HMGET", name, *args)
+        else:
+            # Val : Dict[bytes : bytes]
+            return [val.get(to_bytes(key), None) for key in args]
 
     def hvals(self, name: str) -> Union[Awaitable[List], List]:
         """

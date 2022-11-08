@@ -938,7 +938,16 @@ class Redis(AbstractRedis, RedisModuleCommands, CoreCommands, SentinelCommands):
         username=None,
         retry=None,
         redis_connect_func=None,
+        cache_write_once=True,
+        key_types = {}
     ):
+        """
+        Caching layer in redis client
+        """
+        self._key_cache = {}
+        self._is_pipeline = False  # Hack to make codebase compatible with pipelines
+        self._cache_write_once = cache_write_once
+        self._key_types = key_types
         """
         Initialize a new Redis client.
         To specify a retry policy for specific errors, first set
@@ -1812,6 +1821,8 @@ class Pipeline(Redis):
 
         self.watching = False
         self.reset()
+
+        self._is_pipeline = True
 
     def __enter__(self):
         return self
