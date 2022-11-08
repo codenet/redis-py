@@ -15,7 +15,7 @@ Currently supported commands with WRITE_ONCE:
 """
 
 
-# For now we only support single level key prefixes
+# For now we only support single level key suffixes
 # dict [key_suffix (str) -> KeyCacheProp]
 def get_key_type(key: str, key_types):
     toks = key.split(":")
