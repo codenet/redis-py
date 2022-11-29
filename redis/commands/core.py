@@ -935,6 +935,7 @@ class ManagementCommands(CommandsProtocol):
         args = []
         if asynchronous:
             args.append(b"ASYNC")
+        self._flush_cache()
         return self.execute_command("FLUSHALL", *args, **kwargs)
 
     def flushdb(self, asynchronous: bool = False, **kwargs) -> ResponseT:
@@ -949,6 +950,9 @@ class ManagementCommands(CommandsProtocol):
         args = []
         if asynchronous:
             args.append(b"ASYNC")
+
+        # TODO: Caching for different db's not implemented yet
+        self._flush_cache()
         return self.execute_command("FLUSHDB", *args, **kwargs)
 
     def sync(self) -> ResponseT:

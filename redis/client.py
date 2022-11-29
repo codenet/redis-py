@@ -1041,6 +1041,9 @@ class Redis(AbstractRedis, RedisModuleCommands, CoreCommands, SentinelCommands):
 
         self.response_callbacks = CaseInsensitiveDict(self.__class__.RESPONSE_CALLBACKS)
 
+    def _flush_cache(self):
+        self._key_cache.clear()
+
     def __repr__(self):
         return f"{type(self).__name__}<{repr(self.connection_pool)}>"
 
