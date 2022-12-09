@@ -75,14 +75,14 @@ def to_bytes(val: Union[str, bytes, memoryview]):
 def get_from_cache(rds, key: str, get_cmd: str = 'GET') -> Tuple[Any, bool]:
     """
     Gets key from cache if exists,
-    Otherwise gets key from redis, saves in the cache and returns
+    Otherwise gets key from redis(if get_cmd is not None), saves in the cache and returns
     """
     if not rds._is_pipeline and rds._cache_write_once:
         key = to_str(key)
         key_type = get_key_type(key, rds._key_types)
         if key_type == KeyCacheProp.WRITE_ONCE:
             val = rds._key_cache.get(key, None)
-            if val is None:
+            if val is None and get_cmd is not None:
                 val = rds.execute_command(get_cmd, key)
                 rds._key_cache[key] = val
 
@@ -4820,6 +4820,13 @@ class HashCommands(CommandsProtocol):
 
         For more information see https://redis.io/commands/hexists
         """
+        # HEXISTS is may be used to check a key before creating it.
+        # So, to not save it in cache yet, use get_cmd=None.
+        # This will return the val if it was already there in cache.
+        # If it was not there, the cache won't be updated.
+        val, used_cache = get_from_cache(self, name, get_cmd=None)
+        if val is not None:
+            return to_bytes(key) in val
         return self.execute_command("HEXISTS", name, key)
 
     def hget(
