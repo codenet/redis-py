@@ -72,6 +72,25 @@ def to_bytes(val: Union[str, bytes, memoryview]):
         return bytes(val)
 
 
+def get_from_cache(rds, key: str, get_cmd: Union[str, None] = 'GET') -> Tuple[Any, bool]:
+    """
+    Gets key from cache if exists,
+    Otherwise gets key from redis(if get_cmd is not None), saves in the cache and returns
+    """
+    if not rds._is_pipeline and rds._cache_write_once:
+        key = to_str(key)
+        key_type = get_key_type(key, rds._key_types)
+        if key_type == KeyCacheProp.WRITE_ONCE:
+            val = rds._key_cache.get(key, None)
+            if val is None and get_cmd is not None:
+                val = rds.execute_command(get_cmd, key)
+                rds._key_cache[key] = val
+
+            return val, True
+
+    return None, False
+
+
 class ACLCommands(CommandsProtocol):
     """
     Redis Access Control List (ACL) commands.
@@ -916,6 +935,7 @@ class ManagementCommands(CommandsProtocol):
         args = []
         if asynchronous:
             args.append(b"ASYNC")
+        self._flush_cache()
         return self.execute_command("FLUSHALL", *args, **kwargs)
 
     def flushdb(self, asynchronous: bool = False, **kwargs) -> ResponseT:
@@ -930,6 +950,9 @@ class ManagementCommands(CommandsProtocol):
         args = []
         if asynchronous:
             args.append(b"ASYNC")
+
+        # TODO: Caching for different db's not implemented yet
+        self._flush_cache()
         return self.execute_command("FLUSHDB", *args, **kwargs)
 
     def sync(self) -> ResponseT:
@@ -1745,17 +1768,9 @@ class BasicKeyCommands(CommandsProtocol):
 
         For more information see https://redis.io/commands/get
         """
-        if not self._is_pipeline and self._cache_write_once:
-            name = to_str(name)
-            key_type = get_key_type(name, self._key_types)
-            if key_type == KeyCacheProp.WRITE_ONCE:
-                val = self._key_cache.get(name, None)
-                if val is None:
-                    val = self.execute_command("GET", name)
-                    self._key_cache[name] = val
-                return val
-            else:
-                return self.execute_command("GET", name)
+        val, used_cache = get_from_cache(self, name)
+        if used_cache:
+            return val
         else:
             return self.execute_command("GET", name)
 
@@ -4805,6 +4820,13 @@ class HashCommands(CommandsProtocol):
 
         For more information see https://redis.io/commands/hexists
         """
+        # HEXISTS may be used to check a key before creating it.
+        # So, don't save it in cache yet, use get_cmd=None.
+        # This will return the val if it was already there in cache.
+        # If it was not there, the cache won't be updated and we will get None.
+        val, used_cache = get_from_cache(self, name, get_cmd=None)
+        if val is not None:
+            return to_bytes(key) in val
         return self.execute_command("HEXISTS", name, key)
 
     def hget(
@@ -4815,21 +4837,12 @@ class HashCommands(CommandsProtocol):
 
         For more information see https://redis.io/commands/hget
         """
-        if not self._is_pipeline and self._cache_write_once:
-            name = to_str(name)
-            key = to_bytes(key)
-            key_type = get_key_type(name, self._key_types)
-            if key_type == KeyCacheProp.WRITE_ONCE:
-                val = self._key_cache.get(name, None)
-                if val is None:
-                    val = self.execute_command("HGETALL", name)
-                    self._key_cache[name] = val
-                    # Val : Dict[bytes : bytes]
-                return val.get(key, None)
-            else:
-                return self.execute_command("HGET", name, key)
-        else:
+        # val : Dict[bytes : bytes]
+        val, used_cache = get_from_cache(self, name, "HGETALL")
+        if not used_cache:
             return self.execute_command("HGET", name, key)
+        else:
+            return val.get(to_bytes(key), None)
 
     def hgetall(self, name: str) -> Union[Awaitable[dict], dict]:
         """
@@ -4837,18 +4850,9 @@ class HashCommands(CommandsProtocol):
 
         For more information see https://redis.io/commands/hgetall
         """
-        if not self._is_pipeline and self._cache_write_once:
-            name = to_str(name)
-            key_type = get_key_type(name, self._key_types)
-            if key_type == KeyCacheProp.WRITE_ONCE:
-                val = self._key_cache.get(name, None)
-                if val is None:
-                    val = self.execute_command("HGETALL", name)
-                    self._key_cache[name] = val
-                    # Val : Dict[bytes : bytes]
-                return val
-            else:
-                return self.execute_command("HGETALL", name)
+        val, used_cache = get_from_cache(self, name, "HGETALL")
+        if used_cache:
+            return val
         else:
             return self.execute_command("HGETALL", name)
 
@@ -4954,21 +4958,13 @@ class HashCommands(CommandsProtocol):
         """
         args = list_or_args(keys, args)
 
-        if not self._is_pipeline and self._cache_write_once:
-            name = to_str(name)
-            key_type = get_key_type(name, self._key_types)
-            if key_type == KeyCacheProp.WRITE_ONCE:
-                val = self._key_cache.get(name, None)
-                if val is None:
-                    val = self.execute_command("HGETALL", name)
-                    self._key_cache[name] = val
-                    # Val : Dict[bytes : bytes]
-                return [val.get(to_bytes(key), None) for key in args]
-            else:
-                return self.execute_command("HMGET", name, *args)
+        val, used_cache = get_from_cache(self, name, "HGETALL")
 
-        else:
+        if not used_cache:
             return self.execute_command("HMGET", name, *args)
+        else:
+            # Val : Dict[bytes : bytes]
+            return [val.get(to_bytes(key), None) for key in args]
 
     def hvals(self, name: str) -> Union[Awaitable[List], List]:
         """

@@ -1,5 +1,6 @@
 *.pyc
 redis.egg-info
+redis_popper.egg-info
 build/
 dist/
 dump.rdb

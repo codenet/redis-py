@@ -15,8 +15,9 @@ Currently supported commands with WRITE_ONCE:
 """
 
 
-# For now we only support single level key prefixes
-# dict [key_prefix (str) -> KeyCacheProp]
+# For now we only support single level key suffixes
+# dict [key_suffix (str) -> KeyCacheProp]
 def get_key_type(key: str, key_types):
-    prefix = key.split(":")[0]
-    return key_types.get(prefix, KeyCacheProp.DEFAULT)
+    toks = key.split(":")
+    suffix = toks[-1] if len(toks) > 1 else ""
+    return key_types.get(suffix, KeyCacheProp.DEFAULT)
