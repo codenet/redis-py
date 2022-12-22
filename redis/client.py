@@ -1,10 +1,14 @@
 import copy
 import datetime
+import multiprocessing
 import re
 import threading
 import time
 import warnings
+from enum import Enum
 from itertools import chain
+from queue import Full
+from typing import Union, Tuple, Iterable, Callable
 
 from redis.commands import (
     CoreCommands,
@@ -2126,3 +2130,172 @@ class Pipeline(Redis):
     def unwatch(self):
         """Unwatches all previously specified keys"""
         return self.watching and self.execute_command("UNWATCH") or True
+
+
+class AsyncWriter(Redis):
+
+    ALLOWED_COMMANDS = {"SET", "HSET", "SADD"} # TODO
+
+    class CommandNotAllowed(Exception):
+        pass
+
+    class MessageType(Enum):
+        CMD = 0
+        WAIT = 1
+        SHUTDOWN = 2
+
+    def __init__(self, *args, **kwargs):
+        self.send_queue = multiprocessing.Queue()
+        self.recv_queue = multiprocessing.Queue()
+        self.consumer_process = multiprocessing.Process(target=AsyncWriter.consumer, args=(self.recv_queue, self.send_queue, args, kwargs))
+        self.consumer_process.start()
+
+    def __del__(self):
+        self.shutdown_consumer()
+
+    @staticmethod
+    def consumer(send_queue : multiprocessing.Queue, recv_queue : multiprocessing.Queue, *args, **kwargs) -> None:
+        r = Redis(*args, **kwargs)
+        exceptions = []
+        while True:
+            item : Tuple[AsyncWriter.MessageType, Union[None, Iterable], Union[None, dict]] = recv_queue.get()
+            if item[0] == AsyncWriter.MessageType.CMD:
+                args = item[1]
+                kwargs = item[2]
+                try:
+                    r.execute_command(*args, **kwargs)
+                except Exception as e:
+                    exceptions.append(e)
+
+            elif item[0] == AsyncWriter.MessageType.WAIT:
+                send_queue.put(exceptions)
+                exceptions.clear()
+            else:
+                assert item[0] == AsyncWriter.MessageType.SHUTDOWN
+                exit(0)
+
+    @staticmethod
+    def command_guard(cmd : str) -> None:
+        if cmd not in AsyncWriter.ALLOWED_COMMANDS:
+            raise AsyncWriter.CommandNotAllowed
+
+    def put(self, msg : any) -> None:
+        while True:
+            try:
+                self.send_queue.put_nowait(msg)
+                break
+            except Full:
+                time.sleep(1e-3)
+                continue
+
+    # @override
+    def execute_command(self, *args, **kwargs):
+        # print(args)
+        while True:
+            try:
+                AsyncWriter.command_guard(args[0])
+                self.put((AsyncWriter.MessageType.CMD, args, kwargs))
+                break
+            except Full:
+                continue
+
+    def wait_all(self) -> None:
+        self.put((AsyncWriter.MessageType.WAIT, None, None))
+        exceptions : list[Exception] = self.recv_queue.get()
+        if len(exceptions) != 0:
+            raise Exception(exceptions)
+
+    def shutdown_consumer(self):
+        self.put((AsyncWriter.MessageType.SHUTDOWN, None, None))
+        self.consumer_process.join()
+
+
+class AsyncPipelinedWriter(Pipeline):
+    class CommandNotAllowed(Exception):
+        pass
+    class MessageType(Enum):
+        REMOTE_CALL = 0
+        WAIT = 1
+        SHUTDOWN = 2
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.send_queue = multiprocessing.Queue()
+        self.recv_queue = multiprocessing.Queue()
+        self.stack_sync_point = 0
+        self.consumer_process = multiprocessing.Process(target=AsyncWriter.consumer, args=(self.recv_queue, self.send_queue, args, kwargs))
+        self.consumer_process.start()
+
+    def __del__(self):
+        self.shutdown_consumer()
+
+    def remote_call(self, func_name : str, *args, **kwargs):
+        self.put((self.command_stack[self.stack_sync_point:] , func_name, args, kwargs))
+        self.stack_sync_point = len(self.command_stack)
+
+
+    @staticmethod
+    def consumer(send_queue : multiprocessing.Queue, recv_queue : multiprocessing.Queue, *args, **kwargs) -> None:
+        r = Pipeline(*args, **kwargs)
+        exceptions = []
+        while True:
+            item : Tuple[AsyncWriter.MessageType, Union[None, Iterable], Union[None, dict]] = recv_queue.get()
+            if item[0] == AsyncWriter.MessageType.CMD:
+                args = item[1]
+                kwargs = item[2]
+                try:
+                    r.execute_command(*args, **kwargs)
+                except Exception as e:
+                    exceptions.append(e)
+
+            elif item[0] == AsyncWriter.MessageType.WAIT:
+                send_queue.put(exceptions)
+                exceptions.clear()
+            else:
+                assert item[0] == AsyncWriter.MessageType.SHUTDOWN
+                exit(0)
+
+    @staticmethod
+    def command_guard(cmd : str) -> None:
+        if cmd not in AsyncWriter.ALLOWED_COMMANDS:
+            raise AsyncWriter.CommandNotAllowed
+
+    def put(self, msg : any) -> None:
+        while True:
+            try:
+                self.send_queue.put_nowait(msg)
+                break
+            except Full:
+                time.sleep(1e-3)
+                continue
+
+    # @override
+    def execute_command(self, *args, **kwargs):
+        # print(args)
+        while True:
+            try:
+                AsyncWriter.command_guard(args[0])
+                self.put((AsyncWriter.MessageType.CMD, args, kwargs))
+                break
+            except Full:
+                continue
+
+
+
+
+
+
+
+
+
+
+
+    def wait_all(self) -> None:
+        self.put((AsyncWriter.MessageType.WAIT, None, None))
+        exceptions : list[Exception] = self.recv_queue.get()
+        if len(exceptions) != 0:
+            raise Exception(exceptions)
+
+    def shutdown_consumer(self):
+        self.put((AsyncWriter.MessageType.SHUTDOWN, None, None))
+        self.consumer_process.join()
