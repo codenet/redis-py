@@ -72,7 +72,7 @@ def to_bytes(val: Union[str, bytes, memoryview]):
         return bytes(val)
 
 
-def get_from_cache(rds, key: str, get_cmd: str = 'GET') -> Tuple[Any, bool]:
+def get_from_cache(rds, key: str, get_cmd: Union[str, None] = 'GET') -> Tuple[Any, bool]:
     """
     Gets key from cache if exists,
     Otherwise gets key from redis(if get_cmd is not None), saves in the cache and returns
@@ -4820,10 +4820,10 @@ class HashCommands(CommandsProtocol):
 
         For more information see https://redis.io/commands/hexists
         """
-        # HEXISTS is may be used to check a key before creating it.
-        # So, to not save it in cache yet, use get_cmd=None.
+        # HEXISTS may be used to check a key before creating it.
+        # So, don't save it in cache yet, use get_cmd=None.
         # This will return the val if it was already there in cache.
-        # If it was not there, the cache won't be updated.
+        # If it was not there, the cache won't be updated and we will get None.
         val, used_cache = get_from_cache(self, name, get_cmd=None)
         if val is not None:
             return to_bytes(key) in val
