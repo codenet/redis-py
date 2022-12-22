@@ -3,7 +3,6 @@ name: CI
 on: [push, pull]
 
 jobs:
-
    dependency-audit:
      name: Dependency audit
      runs-on: ubuntu-latest

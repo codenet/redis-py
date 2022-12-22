@@ -1,4 +1,3 @@
-import math
 import time
 
 from redis.client import Redis
@@ -13,6 +12,7 @@ def timed(f, *args, **kwargs):
 
 def test_write_once():
     print('')
+    LATENCY = 0.05 * 1e-3
     SUFFIX = "C"
     def suffixed(key):
         return key + ":" + SUFFIX
@@ -33,8 +33,8 @@ def test_write_once():
         v, t3 = timed(get_cmd, *get_args)
         assert v == ve
 
-        assert t1 - t3 >= 0.05 * 1e-3
-        assert t2 - t3 >= 0.05 * 1e-3
+        assert t1 - t3 >= LATENCY
+        assert t2 - t3 >= LATENCY
 
         print(get_cmd.__name__, t1, t2, t3)
         print(v)
@@ -51,8 +51,21 @@ def test_write_once():
     assert not r.hexists(suffixed('no'), 'key')
     assert not r.hexists(suffixed('no'), 'key')
 
-    write_once_cmd_test(r.hset, r.hexists, ['hexists', None, None, {'k1':'v1', 'k2':'v2', 'k3':'v3'}],
-                        ['hexists', 'k2'])
+    r.hset(suffixed('hx'), 'k1', 'v1')
+    assert not r.hexists(suffixed('hx'), 'k2')
+    assert not r.hexists(suffixed('hx'), 'k2')
+    assert r.hexists(suffixed('hx'), 'k1')
+    assert r.hexists(suffixed('hx'), 'k1')
+
+    _, t1 = timed(r.hexists, suffixed('hx'), 'k1')
+    r.hgetall(suffixed('hx'))  # should be cached now
+    v, t2 = timed(r.hexists, suffixed('hx'), 'k1')
+
+    assert t1 - t2 >= LATENCY
+    print('hexists', t1, t2, v)
+
+
+
 
 def test_flush():
     keys = {"c": KeyCacheProp.WRITE_ONCE}
