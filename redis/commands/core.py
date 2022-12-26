@@ -79,16 +79,19 @@ def get_from_cache(rds, key: str,
     Otherwise gets key from redis(if get_cmd is not None),
     saves in the cache and returns
     """
-    if not rds._is_pipeline and rds._cache_write_once:
-        key = to_str(key)
-        key_type = get_key_type(key, rds._key_types)
-        if key_type == KeyCacheProp.WRITE_ONCE:
-            val = rds._key_cache.get(key, None)
-            if val is None and get_cmd is not None:
-                val = rds.execute_command(get_cmd, key)
-                rds._key_cache[key] = val
+    try:
+        if not rds._is_pipeline and rds._cache_write_once:
+            key = to_str(key)
+            key_type = get_key_type(key, rds._key_types)
+            if key_type == KeyCacheProp.WRITE_ONCE:
+                val = rds._key_cache.get(key, None)
+                if val is None and get_cmd is not None:
+                    val = rds.execute_command(get_cmd, key)
+                    rds._key_cache[key] = val
 
-            return val, True
+                return val, True
+    except AttributeError:
+        pass
 
     return None, False
 
@@ -937,7 +940,10 @@ class ManagementCommands(CommandsProtocol):
         args = []
         if asynchronous:
             args.append(b"ASYNC")
-        self._flush_cache()
+        try:
+            self._flush_cache()
+        except AttributeError:
+            pass
         return self.execute_command("FLUSHALL", *args, **kwargs)
 
     def flushdb(self, asynchronous: bool = False, **kwargs) -> ResponseT:
@@ -957,7 +963,6 @@ class ManagementCommands(CommandsProtocol):
             # TODO: Caching for different db's not implemented yet
             self._flush_cache()
         except AttributeError:
-            # Hack for now
             pass
 
         return self.execute_command("FLUSHDB", *args, **kwargs)
