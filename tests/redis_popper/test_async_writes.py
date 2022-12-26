@@ -21,6 +21,7 @@ def test_async_writer():
 
     bench_async_writer()
 
+
 def bench_async_writer():
     r = Redis()
     r.flushall()

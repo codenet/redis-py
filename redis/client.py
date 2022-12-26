@@ -1,4 +1,3 @@
-import abc
 import copy
 import datetime
 import multiprocessing
@@ -6,11 +5,10 @@ import re
 import threading
 import time
 import warnings
-from abc import abstractmethod
 from enum import Enum
 from itertools import chain
 from queue import Full
-from typing import Union, Tuple, Iterable, Callable
+from typing import Union, Tuple, Iterable
 
 from redis.commands import (
     CoreCommands,
@@ -945,7 +943,7 @@ class Redis(AbstractRedis, RedisModuleCommands, CoreCommands, SentinelCommands):
         retry=None,
         redis_connect_func=None,
         cache_write_once=True,
-        key_types = {}
+        key_types=None
     ):
         """
         Caching layer in redis client
@@ -953,7 +951,7 @@ class Redis(AbstractRedis, RedisModuleCommands, CoreCommands, SentinelCommands):
         self._key_cache = {}
         self._is_pipeline = False  # Hack to make codebase compatible with pipelines
         self._cache_write_once = cache_write_once
-        self._key_types = key_types
+        self._key_types = key_types if key_types else {}
         """
         Initialize a new Redis client.
         To specify a retry policy for specific errors, first set
@@ -2137,6 +2135,7 @@ class Pipeline(Redis):
 class AsyncWriteCommandNotAllowed(Exception):
     pass
 
+
 class _MessageType(Enum):
     CMD = 0
     WAIT = 1
@@ -2146,12 +2145,17 @@ class _MessageType(Enum):
 
 ALLOWED_ASYNC_WRITE_COMMANDS = {"SET", "HSET", "SADD", "ZADD", "FCALL"}  # TODO
 
+
 class AsyncWriter(Redis):
+
     def __init__(self, *args, **kwargs):
         self.send_queue = multiprocessing.Queue()
         self.recv_queue = multiprocessing.Queue()
         self.consumer_process = multiprocessing.Process(target=AsyncWriter._consumer,
-                                                        args=(self.recv_queue, self.send_queue, args, kwargs))
+                                                        args=(self.recv_queue,
+                                                              self.send_queue,
+                                                              args,
+                                                              kwargs))
         self.consumer_process.start()
 
     def __del__(self):
@@ -2172,11 +2176,13 @@ class AsyncWriter(Redis):
                 continue
 
     @staticmethod
-    def _consumer(send_queue: multiprocessing.Queue, recv_queue: multiprocessing.Queue, args, kwargs) -> None:
+    def _consumer(send_queue: multiprocessing.Queue,
+                  recv_queue: multiprocessing.Queue, args, kwargs) -> None:
         r = Redis(*args, **kwargs)
         exceptions = []
         while True:
-            item : Tuple[_MessageType, Union[None, Iterable], Union[None, dict]] = recv_queue.get()
+            item: Tuple[_MessageType, Union[None, Iterable], Union[None, dict]]\
+                = recv_queue.get()
             if item[0] == _MessageType.CMD:
                 args = item[1]
                 kwargs = item[2]

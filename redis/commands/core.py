@@ -72,10 +72,12 @@ def to_bytes(val: Union[str, bytes, memoryview]):
         return bytes(val)
 
 
-def get_from_cache(rds, key: str, get_cmd: Union[str, None] = 'GET') -> Tuple[Any, bool]:
+def get_from_cache(rds, key: str,
+                   get_cmd: Union[str, None] = 'GET') -> Tuple[Any, bool]:
     """
     Gets key from cache if exists,
-    Otherwise gets key from redis(if get_cmd is not None), saves in the cache and returns
+    Otherwise gets key from redis(if get_cmd is not None),
+    saves in the cache and returns
     """
     if not rds._is_pipeline and rds._cache_write_once:
         key = to_str(key)
@@ -951,8 +953,13 @@ class ManagementCommands(CommandsProtocol):
         if asynchronous:
             args.append(b"ASYNC")
 
-        # TODO: Caching for different db's not implemented yet
-        self._flush_cache()
+        try:
+            # TODO: Caching for different db's not implemented yet
+            self._flush_cache()
+        except AttributeError:
+            # Hack for now
+            pass
+
         return self.execute_command("FLUSHDB", *args, **kwargs)
 
     def sync(self) -> ResponseT:

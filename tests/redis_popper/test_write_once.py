@@ -10,16 +10,19 @@ def timed(f, *args, **kwargs):
     ed = time.time()
     return ret, ed - st
 
+
 def test_write_once():
     print('')
     LATENCY = 0.05 * 1e-3
     SUFFIX = "C"
+
     def suffixed(key):
         return key + ":" + SUFFIX
 
     key_types = {SUFFIX : KeyCacheProp.WRITE_ONCE}
     r = Redis(host='localhost', key_types=key_types)
     r.flushall()
+
     def write_once_cmd_test(set_cmd, get_cmd, set_args, get_args):
         key = set_args[0]
         set_cmd(*set_args)
@@ -41,11 +44,13 @@ def test_write_once():
 
     write_once_cmd_test(r.set, r.get, ['get', 'val'], ['get'])
 
-    write_once_cmd_test(r.hset, r.hget, ['hget', 'key', 'val'], ['hget','key'])
+    write_once_cmd_test(r.hset, r.hget, ['hget', 'key', 'val'], ['hget', 'key'])
 
-    write_once_cmd_test(r.hset, r.hgetall, ['hgetall', None, None, {'k1':'v1', 'k2':'v2'}], ['hgetall'])
+    write_once_cmd_test(r.hset, r.hgetall,
+                        ['hgetall', None, None, {'k1': 'v1', 'k2': 'v2'}], ['hgetall'])
 
-    write_once_cmd_test(r.hset, r.hmget, ['hmget', None, None, {'k1':'v1', 'k2':'v2', 'k3':'v3'}],
+    write_once_cmd_test(r.hset, r.hmget,
+                        ['hmget', None, None, {'k1': 'v1', 'k2': 'v2', 'k3': 'v3'}],
                         ['hmget', ['k2', 'k3']])
 
     assert not r.hexists(suffixed('no'), 'key')
@@ -63,8 +68,6 @@ def test_write_once():
 
     assert t1 - t2 >= LATENCY
     print('hexists', t1, t2, v)
-
-
 
 
 def test_flush():
