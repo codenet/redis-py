@@ -2155,11 +2155,19 @@ class AsyncWriter(Redis):
                                                         args=(self.recv_queue,
                                                               self.send_queue,
                                                               args,
-                                                              kwargs))
+                                                              kwargs),
+                                                        daemon=True)
         self.consumer_process.start()
 
     def __del__(self):
-        self._shutdown_consumer()
+        # The consumer may have been killed
+        # We don't want to crash in __del__
+        try:
+            self._shutdown_consumer()
+            self.send_queue.close()
+            self.recv_queue.close()
+        except Exception:
+            pass
 
     @staticmethod
     def _command_guard(cmd : str) -> None:
@@ -2192,7 +2200,7 @@ class AsyncWriter(Redis):
                     exceptions.append(e)
 
             elif item[0] == _MessageType.WAIT:
-                send_queue.put(exceptions)
+                send_queue.put(exceptions.copy())
                 exceptions.clear()
             else:
                 assert item[0] == _MessageType.SHUTDOWN
