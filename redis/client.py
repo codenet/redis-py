@@ -2157,11 +2157,15 @@ class AsyncWriter(Redis):
                                                               args,
                                                               kwargs),
                                                         daemon=True)
+        self.killed = False
         self.consumer_process.start()
 
     def __del__(self):
+        # Stops consumer process gracefully
         # The consumer may have been killed
         # We don't want to crash in __del__
+        if self.killed:
+            return
         try:
             self._shutdown_consumer()
             self.send_queue.close()
@@ -2226,3 +2230,12 @@ class AsyncWriter(Redis):
         exceptions: list[Exception] = self.recv_queue.get()
         if len(exceptions) != 0:
             raise Exception(exceptions)
+
+    def is_alive(self) -> bool:
+        return self.consumer_process.is_alive()
+
+    def kill(self):
+        self.killed = True
+        self._shutdown_consumer()
+        self.send_queue.close()
+        self.recv_queue.close()
