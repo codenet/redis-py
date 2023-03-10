@@ -1,10 +1,14 @@
 import copy
 import datetime
+import multiprocessing
 import re
 import threading
 import time
 import warnings
+from enum import Enum
 from itertools import chain
+from queue import Full
+from typing import Union, Tuple, Iterable
 
 from redis.commands import (
     CoreCommands,
@@ -939,7 +943,7 @@ class Redis(AbstractRedis, RedisModuleCommands, CoreCommands, SentinelCommands):
         retry=None,
         redis_connect_func=None,
         cache_write_once=True,
-        key_types = {}
+        key_types=None
     ):
         """
         Caching layer in redis client
@@ -947,7 +951,7 @@ class Redis(AbstractRedis, RedisModuleCommands, CoreCommands, SentinelCommands):
         self._key_cache = {}
         self._is_pipeline = False  # Hack to make codebase compatible with pipelines
         self._cache_write_once = cache_write_once
-        self._key_types = key_types
+        self._key_types = key_types if key_types else {}
         """
         Initialize a new Redis client.
         To specify a retry policy for specific errors, first set
@@ -2126,3 +2130,112 @@ class Pipeline(Redis):
     def unwatch(self):
         """Unwatches all previously specified keys"""
         return self.watching and self.execute_command("UNWATCH") or True
+
+
+class AsyncWriteCommandNotAllowed(Exception):
+    pass
+
+
+class _MessageType(Enum):
+    CMD = 0
+    WAIT = 1
+    SHUTDOWN = 2
+    REMOTE_CALL = 3
+
+
+ALLOWED_ASYNC_WRITE_COMMANDS = {"SET", "HSET", "SADD", "ZADD", "FCALL"}  # TODO
+
+
+class AsyncWriter(Redis):
+
+    def __init__(self, *args, **kwargs):
+        self.send_queue = multiprocessing.Queue()
+        self.recv_queue = multiprocessing.Queue()
+        self.consumer_process = multiprocessing.Process(target=AsyncWriter._consumer,
+                                                        args=(self.recv_queue,
+                                                              self.send_queue,
+                                                              args,
+                                                              kwargs),
+                                                        daemon=True)
+        self.killed = False
+        self.consumer_process.start()
+
+    def __del__(self):
+        # Stops consumer process gracefully
+        # The consumer may have been killed
+        # We don't want to crash in __del__
+        if self.killed:
+            return
+        try:
+            self._shutdown_consumer()
+            self.send_queue.close()
+            self.recv_queue.close()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _command_guard(cmd : str) -> None:
+        if cmd not in ALLOWED_ASYNC_WRITE_COMMANDS:
+            raise AsyncWriteCommandNotAllowed
+
+    def _put(self, msg: any) -> None:
+        while True:
+            try:
+                self.send_queue.put_nowait(msg)
+                break
+            except Full:
+                time.sleep(1e-3)
+                continue
+
+    @staticmethod
+    def _consumer(send_queue: multiprocessing.Queue,
+                  recv_queue: multiprocessing.Queue, args, kwargs) -> None:
+        r = Redis(*args, **kwargs)
+        exceptions = []
+        while True:
+            item: Tuple[_MessageType, Union[None, Iterable], Union[None, dict]]\
+                = recv_queue.get()
+            if item[0] == _MessageType.CMD:
+                args = item[1]
+                kwargs = item[2]
+                try:
+                    r.execute_command(*args, **kwargs)
+                except Exception as e:
+                    exceptions.append(e)
+
+            elif item[0] == _MessageType.WAIT:
+                send_queue.put(exceptions.copy())
+                exceptions.clear()
+            else:
+                assert item[0] == _MessageType.SHUTDOWN
+                exit(0)
+
+    def _shutdown_consumer(self):
+        self._put((_MessageType.SHUTDOWN, None, None))
+        self.consumer_process.join()
+
+    # @override
+    def execute_command(self, *args, **kwargs):
+        # print(args)
+        while True:
+            try:
+                self._command_guard(args[0])
+                self._put((_MessageType.CMD, args, kwargs))
+                break
+            except Full:
+                continue
+
+    def wait_all(self) -> None:
+        self._put((_MessageType.WAIT, None, None))
+        exceptions: list[Exception] = self.recv_queue.get()
+        if len(exceptions) != 0:
+            raise Exception(exceptions)
+
+    def is_alive(self) -> bool:
+        return self.consumer_process.is_alive()
+
+    def kill(self):
+        self.killed = True
+        self._shutdown_consumer()
+        self.send_queue.close()
+        self.recv_queue.close()
